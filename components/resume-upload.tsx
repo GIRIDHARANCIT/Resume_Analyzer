@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Upload, FileText, X, CheckCircle, AlertCircle, Briefcase } from "lucide-react"
+import { uploadAPI, apiUtils } from "@/lib/api-client"
 
 interface UploadedFile {
   id: string
@@ -64,7 +65,16 @@ export function ResumeUpload({ onFilesProcessed }: ResumeUploadProps) {
       (file) =>
         file.type === "application/pdf" ||
         file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-        file.type === "application/msword",
+        file.type === "application/msword" ||
+        file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+        file.type === "application/vnd.ms-excel" ||
+        file.type === "text/plain" ||
+        file.type === "text/rtf" ||
+        file.name.toLowerCase().endsWith('.pdf') ||
+        file.name.toLowerCase().endsWith('.doc') ||
+        file.name.toLowerCase().endsWith('.docx') ||
+        file.name.toLowerCase().endsWith('.txt') ||
+        file.name.toLowerCase().endsWith('.rtf')
     )
 
     const newFiles: UploadedFile[] = acceptedFiles.map((file) => ({
@@ -105,45 +115,128 @@ export function ResumeUpload({ onFilesProcessed }: ResumeUploadProps) {
   }
 
   const simulateFileProcessing = async (uploadedFile: UploadedFile) => {
-    // Simulate upload progress
-    for (let progress = 0; progress <= 100; progress += 10) {
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      setUploadedFiles((prev) => prev.map((f) => (f.id === uploadedFile.id ? { ...f, progress } : f)))
+    try {
+      // Simulate upload progress
+      for (let progress = 0; progress <= 100; progress += 10) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        setUploadedFiles((prev) => prev.map((f) => (f.id === uploadedFile.id ? { ...f, progress } : f)))
+      }
+
+      // Change to processing status
+      setUploadedFiles((prev) =>
+        prev.map((f) => (f.id === uploadedFile.id ? { ...f, status: "processing", progress: 0 } : f)),
+      )
+
+      // Get user session
+      const session = localStorage.getItem("userSession")
+      const userSession = session ? JSON.parse(session) : null
+      
+      if (!userSession?.email) {
+        throw new Error('User session not found')
+      }
+
+      // Upload to backend
+      const uploadResult = await uploadAPI.uploadFiles([uploadedFile.file], userSession.email)
+      
+      if (uploadResult.success && uploadResult.files.length > 0) {
+        const processedFile = uploadResult.files[0]
+        
+        // Extract candidate name from filename or content
+        let candidateName = processedFile.candidateName
+        if (!candidateName || candidateName === 'Unknown Candidate') {
+          candidateName = extractCandidateName(uploadedFile.name, processedFile.extractedText)
+        }
+        
+        // Extract candidate role from content
+        let candidateRole = processedFile.candidateRole
+        if (!candidateRole || candidateRole === 'Unknown Role') {
+          candidateRole = extractCandidateRole(processedFile.extractedText)
+        }
+        
+        setUploadedFiles((prev) =>
+          prev.map((f) =>
+            f.id === uploadedFile.id
+              ? {
+                  ...f,
+                  status: "completed",
+                  progress: 100,
+                  candidateName: candidateName,
+                  candidateRole: candidateRole,
+                  extractedText: processedFile.extractedText,
+                }
+              : f,
+          ),
+        )
+      } else {
+        throw new Error('Upload failed')
+      }
+    } catch (error) {
+      console.error('File processing failed:', apiUtils.handleError(error))
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.id === uploadedFile.id
+            ? { ...f, status: "error", progress: 0 }
+            : f,
+        ),
+      )
     }
-
-    // Change to processing status
-    setUploadedFiles((prev) =>
-      prev.map((f) => (f.id === uploadedFile.id ? { ...f, status: "processing", progress: 0 } : f)),
-    )
-
-    // Simulate text extraction and processing
-    for (let progress = 0; progress <= 100; progress += 20) {
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      setUploadedFiles((prev) => prev.map((f) => (f.id === uploadedFile.id ? { ...f, progress } : f)))
-    }
-
-    // Complete processing with mock data
-    const mockCandidateNames = ["John Smith", "Sarah Johnson", "Michael Chen", "Emily Davis", "David Wilson"]
-    const mockRoles = ["Software Engineer", "Data Analyst", "Marketing Manager", "Product Manager", "Sales Rep"]
-
-    setUploadedFiles((prev) =>
-      prev.map((f) =>
-        f.id === uploadedFile.id
-          ? {
-              ...f,
-              status: "completed",
-              progress: 100,
-              candidateName: mockCandidateNames[Math.floor(Math.random() * mockCandidateNames.length)],
-              candidateRole: mockRoles[Math.floor(Math.random() * mockRoles.length)],
-              extractedText: "Mock extracted resume text content...",
-            }
-          : f,
-      ),
-    )
   }
 
   const removeFile = (fileId: string) => {
     setUploadedFiles((prev) => prev.filter((f) => f.id !== fileId))
+  }
+
+  const extractCandidateName = (filename: string, content: string): string => {
+    // Try to extract from filename first
+    const nameFromFile = filename
+      .replace(/\.(pdf|doc|docx|txt|rtf)$/i, '')
+      .replace(/[_-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    
+    if (nameFromFile && nameFromFile.length > 2 && nameFromFile.length < 50) {
+      return nameFromFile
+    }
+    
+    // Try to extract from content using common patterns
+    const lines = content.split('\n').slice(0, 10) // Check first 10 lines
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed.length > 3 && trimmed.length < 50) {
+        // Look for lines that might be names (capitalized words, no special chars)
+        const nameMatch = trimmed.match(/^[A-Z][a-z]+(\s+[A-Z][a-z]+)*$/)
+        if (nameMatch) {
+          return nameMatch[0]
+        }
+      }
+    }
+    
+    return 'Unknown Candidate'
+  }
+
+  const extractCandidateRole = (content: string): string => {
+    const lines = content.split('\n').slice(0, 20) // Check first 20 lines
+    const roleKeywords = [
+      'software engineer', 'developer', 'programmer', 'data analyst', 'data scientist',
+      'product manager', 'project manager', 'marketing manager', 'sales representative',
+      'designer', 'architect', 'consultant', 'specialist', 'coordinator', 'assistant',
+      'director', 'manager', 'lead', 'senior', 'junior', 'intern', 'student'
+    ]
+    
+    for (const line of lines) {
+      const lowerLine = line.toLowerCase()
+      for (const keyword of roleKeywords) {
+        if (lowerLine.includes(keyword)) {
+          // Extract the full role from the line
+          const match = line.match(new RegExp(`.*${keyword}.*`, 'i'))
+          if (match) {
+            return match[0].trim()
+          }
+        }
+      }
+    }
+    
+    return 'Unknown Role'
   }
 
   const formatFileSize = (bytes: number) => {
@@ -263,7 +356,7 @@ export function ResumeUpload({ onFilesProcessed }: ResumeUploadProps) {
             Upload Resumes
           </CardTitle>
           <CardDescription>
-            Upload multiple resume files for bulk analysis. Supports PDF, DOC, and DOCX formats.
+            Upload multiple resume files for bulk analysis. Supports PDF, DOC, DOCX, TXT, RTF, and Excel formats.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -278,7 +371,7 @@ export function ResumeUpload({ onFilesProcessed }: ResumeUploadProps) {
             <input
               type="file"
               multiple
-              accept=".pdf,.doc,.docx"
+              accept=".pdf,.doc,.docx,.txt,.rtf,.xls,.xlsx"
               onChange={handleFileInputChange}
               className="hidden"
               id="file-upload"

@@ -166,38 +166,44 @@ export function analyzeResume(
   candidateRole: string,
   jobTemplate: string,
   customJobDescription?: string,
+  aiRecommendations?: any[],
 ): ATSAnalysisResult {
   const template = JOB_TEMPLATES[jobTemplate as keyof typeof JOB_TEMPLATES]
   const keywords = customJobDescription ? extractKeywordsFromJD(customJobDescription) : template?.keywords || []
 
-  // Analyze keywords
+  // Analyze keywords with improved algorithm
   const keywordAnalysis = analyzeKeywords(resumeText, keywords)
 
-  // Analyze sections
+  // Analyze sections with better detection
   const sectionAnalysis = analyzeSections(resumeText, template?.requiredSections || [])
 
-  // Analyze formatting
+  // Analyze formatting with enhanced checks
   const formattingScore = analyzeFormatting(resumeText)
 
-  // Analyze readability
+  // Analyze readability with improved metrics
   const readabilityScore = analyzeReadability(resumeText)
 
-  // Calculate overall ATS score
+  // Calculate overall ATS score with weighted algorithm
   const atsScore: ATSScore = {
     keywordMatch: keywordAnalysis.relevanceScore,
     sectionCompleteness: sectionAnalysis.completenessScore,
     formatting: formattingScore,
     readability: readabilityScore,
     overall: Math.round(
-      keywordAnalysis.relevanceScore * 0.4 +
-        sectionAnalysis.completenessScore * 0.3 +
-        formattingScore * 0.2 +
-        readabilityScore * 0.1,
+      keywordAnalysis.relevanceScore * 0.35 +
+        sectionAnalysis.completenessScore * 0.25 +
+        formattingScore * 0.25 +
+        readabilityScore * 0.15,
     ),
   }
 
-  // Generate recommendations
-  const recommendations = generateRecommendations(keywordAnalysis, sectionAnalysis, formattingScore, readabilityScore)
+  // Generate base recommendations
+  const baseRecommendations = generateRecommendations(keywordAnalysis, sectionAnalysis, formattingScore, readabilityScore)
+  
+  // Combine with AI recommendations if available
+  const recommendations = aiRecommendations && aiRecommendations.length > 0 
+    ? [...baseRecommendations, ...aiRecommendations]
+    : baseRecommendations
 
   return {
     candidateId: Math.random().toString(36).substr(2, 9),
@@ -208,7 +214,7 @@ export function analyzeResume(
     sectionAnalysis,
     recommendations,
     analysisDate: new Date(),
-    version: 1,
+    version: 2, // Updated version
     improvementHistory: [],
   }
 }
@@ -241,41 +247,146 @@ function analyzeKeywords(resumeText: string, keywords: string[]): KeywordAnalysi
   const resumeLower = resumeText.toLowerCase()
   const matched: string[] = []
   const missing: string[] = []
+  const keywordCounts: { [key: string]: number } = {}
 
+  // Count keyword occurrences and variations
   keywords.forEach((keyword) => {
-    if (resumeLower.includes(keyword.toLowerCase())) {
+    const keywordLower = keyword.toLowerCase()
+    const variations = [
+      keywordLower,
+      keywordLower.replace(/\s+/g, ''), // Remove spaces
+      keywordLower.replace(/\s+/g, '-'), // Replace spaces with hyphens
+      keywordLower.replace(/\s+/g, '_'), // Replace spaces with underscores
+    ]
+
+    let found = false
+    let count = 0
+
+    variations.forEach((variation) => {
+      const regex = new RegExp(`\\b${variation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+      const matches = resumeLower.match(regex)
+      if (matches) {
+        found = true
+        count += matches.length
+      }
+    })
+
+    if (found) {
       matched.push(keyword)
+      keywordCounts[keyword] = count
     } else {
       missing.push(keyword)
     }
   })
 
-  const density = matched.length / keywords.length
-  const relevanceScore = Math.round(density * 100)
+  // Calculate density with weighted scoring
+  const totalKeywords = keywords.length
+  const matchedCount = matched.length
+  
+  // Base density score
+  let density = matchedCount / totalKeywords
+  
+  // Bonus for keyword frequency (up to 20% bonus)
+  const totalOccurrences = Object.values(keywordCounts).reduce((sum, count) => sum + count, 0)
+  const frequencyBonus = Math.min(totalOccurrences / totalKeywords * 0.2, 0.2)
+  
+  // Final relevance score
+  const relevanceScore = Math.round((density + frequencyBonus) * 100)
 
   return {
     matched,
     missing,
-    density,
-    relevanceScore,
+    density: density + frequencyBonus,
+    relevanceScore: Math.min(relevanceScore, 100),
   }
 }
 
 function analyzeSections(resumeText: string, requiredSections: string[]): SectionAnalysis {
   const text = resumeText.toLowerCase()
+  const lines = text.split('\n')
 
-  const sections = {
-    summary: text.includes("summary") || text.includes("objective") || text.includes("profile"),
-    skills: text.includes("skills") || text.includes("technical") || text.includes("competencies"),
-    experience: text.includes("experience") || text.includes("employment") || text.includes("work"),
-    education: text.includes("education") || text.includes("degree") || text.includes("university"),
-    projects: text.includes("projects") || text.includes("portfolio"),
-    certifications: text.includes("certification") || text.includes("certificate") || text.includes("license"),
+  // Enhanced section detection with multiple patterns
+  const sectionPatterns = {
+    summary: [
+      /summary/i, /objective/i, /profile/i, /overview/i, /introduction/i,
+      /executive summary/i, /professional summary/i
+    ],
+    skills: [
+      /skills/i, /technical skills/i, /competencies/i, /expertise/i,
+      /technologies/i, /tools/i, /languages/i
+    ],
+    experience: [
+      /experience/i, /employment/i, /work history/i, /professional experience/i,
+      /career history/i, /employment history/i
+    ],
+    education: [
+      /education/i, /academic/i, /degree/i, /university/i, /college/i,
+      /qualifications/i, /certifications/i
+    ],
+    projects: [
+      /projects/i, /portfolio/i, /achievements/i, /key projects/i,
+      /notable projects/i, /work samples/i
+    ],
+    certifications: [
+      /certifications/i, /certificates/i, /licenses/i, /accreditations/i,
+      /professional certifications/i
+    ],
   }
 
-  const presentSections = Object.values(sections).filter(Boolean).length
-  const totalSections = Object.keys(sections).length
-  const completenessScore = Math.round((presentSections / totalSections) * 100)
+  const sections: any = {}
+  let sectionScores: { [key: string]: number } = {}
+
+  // Check each section with multiple patterns
+  Object.entries(sectionPatterns).forEach(([sectionName, patterns]) => {
+    let found = false
+    let score = 0
+
+    // Check for section headers
+    patterns.forEach(pattern => {
+      if (pattern.test(text)) {
+        found = true
+        score += 50 // Base score for finding section
+      }
+    })
+
+    // Check for content indicators
+    const contentIndicators = {
+      summary: ['overview', 'background', 'professional', 'career'],
+      skills: ['proficient', 'experienced', 'knowledge', 'familiar'],
+      experience: ['responsibilities', 'achieved', 'managed', 'led'],
+      education: ['bachelor', 'master', 'phd', 'gpa', 'graduated'],
+      projects: ['developed', 'created', 'built', 'implemented'],
+      certifications: ['certified', 'licensed', 'accredited', 'authorized']
+    }
+
+    const indicators = contentIndicators[sectionName as keyof typeof contentIndicators] || []
+    indicators.forEach(indicator => {
+      if (text.includes(indicator)) {
+        score += 10
+      }
+    })
+
+    sections[sectionName] = found
+    sectionScores[sectionName] = Math.min(score, 100)
+  })
+
+  // Calculate completeness score with weighted importance
+  const sectionWeights = {
+    summary: 0.15,
+    skills: 0.20,
+    experience: 0.25,
+    education: 0.15,
+    projects: 0.15,
+    certifications: 0.10
+  }
+
+  let weightedScore = 0
+  Object.entries(sectionScores).forEach(([section, score]) => {
+    const weight = sectionWeights[section as keyof typeof sectionWeights] || 0
+    weightedScore += score * weight
+  })
+
+  const completenessScore = Math.round(weightedScore)
 
   return {
     ...sections,

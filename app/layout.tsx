@@ -23,7 +23,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${dmSans.variable} antialiased`}>
-      <body className="font-sans">{children}</body>
+      <body className="font-sans" suppressHydrationWarning={true}>{children}</body>
     </html>
   )
 }
