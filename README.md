@@ -160,10 +160,6 @@ Categories include:
 4. Add tests if applicable
 5. Submit a pull request
 
-## 📄 License
 
-This project is licensed under the MIT License.
-
----
 
 **Note:** This is a comprehensive backend implementation with mock data. For production use, replace mock implementations with real database connections, proper authentication, and enhanced security measures.
